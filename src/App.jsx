@@ -12,24 +12,18 @@ import {
   ArrowLeft,
   UserCheck,
   Sparkles,
+  Trophy,
 } from 'lucide-react';
 
 // ==========================================
-// 1. 내 환경 설정값 (메모장에서 복사해 넣으세요)
+// 1. 내 환경 설정값 (반영 완료)
 // ==========================================
 const SUPABASE_URL = 'https://hkguidilotltuyqdhryl.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_PQGaxgpqp90K7DCS_H4h4g_mA1IR1bH';
-const TRAVEL_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ7zk54HDD8ijkuOVOPlfQ8zU_sHVIIk_SJ9JL1qrDQhLeuWNDxC3a366CZVyd0WQvxrQMV0WfHuS2k/pub?gid=1005138885&single=true&output=csv';
+const TRAVEL_CSV_URL =
+  'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ7zk54HDD8ijkuOVOPlfQ8zU_sHVIIk_SJ9JL1qrDQhLeuWNDxC3a366CZVyd0WQvxrQMV0WfHuS2k/pub?gid=1005138885&single=true&output=csv';
 
-const hasSupabaseConfig =
-  SUPABASE_URL.startsWith('https://') &&
-  !SUPABASE_URL.includes('여기에_') &&
-  SUPABASE_ANON_KEY.length > 10 &&
-  !SUPABASE_ANON_KEY.includes('여기에_');
-
-const supabase = hasSupabaseConfig
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : null;
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ==========================================
 // 2. 가족 명단 & 그룹 지정 (XXX 실명, group_name 수정 가능)
@@ -47,6 +41,36 @@ const FALLBACK_MEMBERS = [
 
 const MONTHS = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
 const NIGHT_OPTIONS = [1, 2, 3, 4, 5, 6];
+
+const MONTH_DAYS = {
+  '1월': 31,
+  '2월': 28,
+  '3월': 31,
+  '4월': 30,
+  '5월': 31,
+  '6월': 30,
+  '7월': 31,
+  '8월': 31,
+  '9월': 30,
+  '10월': 31,
+  '11월': 30,
+  '12월': 31,
+};
+
+const MONTH_COMFORT_SCORE = {
+  '5월': 95,
+  '10월': 94,
+  '4월': 90,
+  '9월': 88,
+  '6월': 84,
+  '11월': 83,
+  '3월': 80,
+  '2월': 76,
+  '12월': 74,
+  '1월': 70,
+  '7월': 65,
+  '8월': 62,
+};
 
 function parseCsvLine(line) {
   const result = [];
@@ -87,14 +111,17 @@ function parseDestinationsCsv(csvText) {
     });
     return {
       id: row.id || `dest-${idx + 1}`,
-      title: row.title || row['여행지명'] || `추천 여행지 ${idx + 1}`,
-      region: row.region || row['지역'] || '',
-      recommended_months: row.recommended_months || row['추천월'] || '전월',
-      recommended_nights: Number(row.recommended_nights || row['추천박수'] || 3) || 3,
-      estimated_total_cost: row.estimated_total_cost || row['예상비용'] || '문의 필요',
-      travel_time: row.travel_time || row['이동시간'] || '',
-      accommodation_type: row.accommodation_type || row['숙소형태'] || '',
-      highlights: row.highlights || row['대표명소'] || row['추천포인트'] || '',
+      title: row.title || row['여행지명'] || row['도시/지역'] || `추천 여행지 ${idx + 1}`,
+      region: row.region || row['지역'] || row['권역'] || '',
+      recommended_months: row.recommended_months || row['추천월'] || row['추천시기'] || '전월',
+      recommended_nights:
+        Number(row.recommended_nights || row['추천박수'] || row['권장박수'] || 3) || 3,
+      estimated_total_cost:
+        row.estimated_total_cost || row['예상비용'] || row['8인예상총액'] || '문의 필요',
+      travel_time: row.travel_time || row['이동시간'] || row['비행시간'] || '',
+      accommodation_type: row.accommodation_type || row['숙소형태'] || row['추천숙소'] || '',
+      highlights:
+        row.highlights || row['대표명소'] || row['추천포인트'] || row['전연령포인트'] || '',
       link_url: row.link_url || row['참고링크'] || '',
     };
   });
@@ -122,6 +149,10 @@ export default function App() {
   const [myMaxNights, setMyMaxNights] = useState(3);
   const [myMemo, setMyMemo] = useState('');
 
+  const [runoffChoice, setRunoffChoice] = useState('');
+  const [selectedTargetMonth, setSelectedTargetMonth] = useState('2월');
+  const [mySelectedDates, setMySelectedDates] = useState([]);
+
   const [newTopicTitle, setNewTopicTitle] = useState('');
   const [newCand, setNewCand] = useState({
     title: '',
@@ -140,40 +171,36 @@ export default function App() {
 
   useEffect(() => {
     async function loadInitial() {
-      if (supabase) {
-        const { data: settingsData } = await supabase
-          .from('app_settings')
-          .select('*')
-          .eq('id', 1)
-          .maybeSingle();
-        if (settingsData) {
-          if (settingsData.app_title) setAppTitle(settingsData.app_title);
-          if (settingsData.family_pin) setFamilyPin(settingsData.family_pin);
-        }
-
-        const { data: membersData } = await supabase.from('members').select('*').order('id');
-        if (membersData && membersData.length > 0) {
-          setMembers(membersData);
-        }
-
-        const { data: topicsData } = await supabase
-          .from('topics')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (topicsData) {
-          setTopics(topicsData);
-          if (topicsData.length > 0) setActiveTopic(topicsData[0]);
-        }
+      const { data: settingsData } = await supabase
+        .from('app_settings')
+        .select('*')
+        .eq('id', 1)
+        .maybeSingle();
+      if (settingsData) {
+        if (settingsData.app_title) setAppTitle(settingsData.app_title);
+        if (settingsData.family_pin) setFamilyPin(settingsData.family_pin);
       }
 
-      if (TRAVEL_CSV_URL.startsWith('http') && !TRAVEL_CSV_URL.includes('여기에_')) {
-        try {
-          const res = await fetch(TRAVEL_CSV_URL);
-          const text = await res.text();
-          setDestinations(parseDestinationsCsv(text));
-        } catch (e) {
-          console.error('CSV load error:', e);
-        }
+      const { data: membersData } = await supabase.from('members').select('*').order('id');
+      if (membersData && membersData.length > 0) {
+        setMembers(membersData);
+      }
+
+      const { data: topicsData } = await supabase
+        .from('topics')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (topicsData) {
+        setTopics(topicsData);
+        if (topicsData.length > 0) setActiveTopic(topicsData[0]);
+      }
+
+      try {
+        const res = await fetch(TRAVEL_CSV_URL);
+        const text = await res.text();
+        setDestinations(parseDestinationsCsv(text));
+      } catch (e) {
+        console.error('CSV load error:', e);
       }
     }
     loadInitial();
@@ -181,7 +208,7 @@ export default function App() {
 
   useEffect(() => {
     async function loadTopicDetails() {
-      if (!supabase || !activeTopic) return;
+      if (!activeTopic) return;
       const { data: sVotes } = await supabase
         .from('schedule_votes')
         .select('*')
@@ -210,10 +237,13 @@ export default function App() {
       setMyMonths(Array.isArray(existing.available_months) ? existing.available_months : []);
       setMyMaxNights(existing.max_nights || 3);
       setMyMemo(existing.memo || '');
+      const savedDates = Array.isArray(existing.selected_dates) ? existing.selected_dates : [];
+      setMySelectedDates(savedDates);
     } else {
       setMyMonths([]);
       setMyMaxNights(3);
       setMyMemo('');
+      setMySelectedDates([]);
     }
   }, [actingAsMemberId, scheduleVotes]);
 
@@ -222,7 +252,6 @@ export default function App() {
     [members, loggedInMemberId]
   );
 
-  // 같은 그룹 가족 우선 정렬 (대리 투표용)
   const sortedMembersForProxy = useMemo(() => {
     if (!loggedInMember) return members;
     const sameGroup = members.filter((m) => m.group_name === loggedInMember.group_name);
@@ -245,7 +274,9 @@ export default function App() {
     const totalVotes = scheduleVotes.length;
     const unanimousMonths =
       totalVotes === members.length && members.length > 0
-        ? MONTHS.filter((m) => monthCounts[m] === members.length)
+        ? MONTHS.filter((m) => monthCounts[m] === members.length).sort(
+            (a, b) => (MONTH_COMFORT_SCORE[b] || 0) - (MONTH_COMFORT_SCORE[a] || 0)
+          )
         : [];
 
     const maxCount = Math.max(0, ...Object.values(monthCounts));
@@ -261,14 +292,25 @@ export default function App() {
       .filter((n) => !Number.isNaN(n) && n > 0);
     const minAgreedNights = nightsList.length > 0 ? Math.min(...nightsList) : 3;
 
+    const filterMonths = runoffChoice ? [runoffChoice] : topMonths;
+
     const matchedDestinations = destinations.filter((d) => {
       const monthOk =
-        topMonths.length === 0 ||
+        filterMonths.length === 0 ||
         !d.recommended_months ||
         d.recommended_months.includes('전월') ||
-        topMonths.some((m) => d.recommended_months.includes(m));
+        filterMonths.some((m) => d.recommended_months.includes(m));
       const nightsOk = !d.recommended_nights || d.recommended_nights <= minAgreedNights + 1;
       return monthOk && nightsOk;
+    });
+
+    const dateCounts = {};
+    scheduleVotes.forEach((v) => {
+      if (Array.isArray(v.selected_dates)) {
+        v.selected_dates.forEach((dt) => {
+          dateCounts[dt] = (dateCounts[dt] || 0) + 1;
+        });
+      }
     });
 
     return {
@@ -279,8 +321,17 @@ export default function App() {
       minAgreedNights,
       matchedDestinations:
         matchedDestinations.length > 0 ? matchedDestinations : destinations.slice(0, 6),
+      dateCounts,
     };
-  }, [scheduleVotes, members, destinations]);
+  }, [scheduleVotes, members, destinations, runoffChoice]);
+
+  useEffect(() => {
+    if (runoffChoice) {
+      setSelectedTargetMonth(runoffChoice);
+    } else if (scheduleSummary.topMonths.length > 0) {
+      setSelectedTargetMonth(scheduleSummary.topMonths[0]);
+    }
+  }, [runoffChoice, scheduleSummary.topMonths]);
 
   const handleSelectMemberAndEnter = (memberId) => {
     if (pinInput !== familyPin) {
@@ -295,10 +346,6 @@ export default function App() {
   const handleCreateTopic = async (e) => {
     e.preventDefault();
     if (!newTopicTitle.trim()) return;
-    if (!supabase) {
-      showToast('Supabase URL과 키를 먼저 입력해 주세요.');
-      return;
-    }
     const { data, error } = await supabase
       .from('topics')
       .insert({
@@ -314,6 +361,8 @@ export default function App() {
       setActiveTopic(data);
       setNewTopicTitle('');
       showToast('새 안건이 등록되었습니다!');
+    } else {
+      showToast('안건 저장 중 오류가 발생했습니다. Supabase 연결을 확인해 주세요.');
     }
   };
 
@@ -321,9 +370,16 @@ export default function App() {
     setMyMonths((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
   };
 
+  const toggleDate = (dayNum) => {
+    const label = `${selectedTargetMonth}-${dayNum}일`;
+    setMySelectedDates((prev) =>
+      prev.includes(label) ? prev.filter((d) => d !== label) : [...prev, label]
+    );
+  };
+
   const handleSaveScheduleVote = async () => {
-    if (!supabase || !activeTopic) {
-      showToast('안건을 선택하거나 Supabase 연결을 확인해 주세요.');
+    if (!activeTopic) {
+      showToast('먼저 홈 화면에서 안건을 선택하거나 새로 만들어 주세요.');
       return;
     }
     const payload = {
@@ -332,6 +388,7 @@ export default function App() {
       voted_by: loggedInMemberId,
       available_months: myMonths,
       max_nights: myMaxNights,
+      selected_dates: mySelectedDates,
       memo: myMemo,
       updated_at: new Date().toISOString(),
     };
@@ -346,13 +403,15 @@ export default function App() {
         return [...filtered, data];
       });
       const targetName = members.find((m) => m.id === actingAsMemberId)?.name || '가족';
-      showToast(`${targetName} 일정 투표가 저장되었습니다!`);
+      showToast(`${targetName} 일정 및 날짜 투표가 저장되었습니다!`);
+    } else {
+      showToast('저장에 실패했습니다. 잠시 후 다시 시도해 주세요.');
     }
   };
 
   const handleAddCandidate = async (e) => {
     e.preventDefault();
-    if (!newCand.title.trim() || !supabase || !activeTopic) return;
+    if (!newCand.title.trim() || !activeTopic) return;
     const { data, error } = await supabase
       .from('candidates')
       .insert({
@@ -382,7 +441,7 @@ export default function App() {
   };
 
   const handlePromoteDestination = async (dest) => {
-    if (!supabase || !activeTopic) return;
+    if (!activeTopic) return;
     const { data, error } = await supabase
       .from('candidates')
       .insert({
@@ -405,7 +464,7 @@ export default function App() {
   };
 
   const handleToggleCandidateVote = async (candidateId) => {
-    if (!supabase || !activeTopic) return;
+    if (!activeTopic) return;
     const existing = candidateVotes.find(
       (v) => v.candidate_id === candidateId && v.member_id === actingAsMemberId
     );
@@ -428,8 +487,15 @@ export default function App() {
   };
 
   const shareSummaryText = useMemo(() => {
-    const topMonthText =
-      scheduleSummary.topMonths.length > 0 ? scheduleSummary.topMonths.join(', ') : '투표 진행중';
+    const finalMonthText =
+      runoffChoice ||
+      (scheduleSummary.topMonths.length > 0 ? scheduleSummary.topMonths.join(', ') : '투표 진행중');
+
+    const topDates = Object.entries(scheduleSummary.dateCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([dt, cnt]) => `${dt}(${cnt}명)`);
+
     const sortedCands = [...candidates].sort((a, b) => {
       const aCount = candidateVotes.filter((v) => v.candidate_id === a.id).length;
       const bCount = candidateVotes.filter((v) => v.candidate_id === b.id).length;
@@ -447,11 +513,21 @@ export default function App() {
 
     return `[${appTitle}] ${activeTopic?.title || '2027 가족여행'} 현황
 • 참여 인원: ${scheduleVotes.length}/${members.length}명
-• 주요 가능 월: ${topMonthText} (최대 ${scheduleSummary.minAgreedNights}박 기준)
+• 주요 가능 월: ${finalMonthText} (최대 ${scheduleSummary.minAgreedNights}박 기준)
+• 인기 날짜: ${topDates.length > 0 ? topDates.join(', ') : '날짜 투표 진행중'}
 
 [후보 투표 현황]
 ${candLines}`;
-  }, [appTitle, activeTopic, scheduleVotes, members, scheduleSummary, candidates, candidateVotes]);
+  }, [
+    appTitle,
+    activeTopic,
+    scheduleVotes,
+    members,
+    scheduleSummary,
+    runoffChoice,
+    candidates,
+    candidateVotes,
+  ]);
 
   const handleCopyShare = async () => {
     try {
@@ -463,7 +539,7 @@ ${candLines}`;
   };
 
   // ==========================================
-  // 1. 입장 화면 (비밀번호 입력 → 본인 이름 바로 터치)
+  // 1. 입장 화면
   // ==========================================
   if (!isUnlocked) {
     return (
@@ -476,13 +552,6 @@ ${candLines}`;
             <h1 className="text-2xl font-bold text-stone-800">{appTitle}</h1>
             <p className="text-sm text-stone-500">비밀번호 입력 후 본인 이름을 터치해 입장하세요</p>
           </div>
-
-          {!hasSupabaseConfig && (
-            <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
-              <strong>src/App.jsx</strong> 상단의 <code>SUPABASE_URL</code>과{' '}
-              <code>SUPABASE_ANON_KEY</code>를 실제 값으로 바꿔주셔야 데이터가 저장됩니다.
-            </div>
-          )}
 
           <div>
             <label className="block text-sm font-semibold text-stone-700 mb-1.5">
@@ -531,6 +600,7 @@ ${candLines}`;
   const currentActor = members.find((m) => m.id === actingAsMemberId) || members[0];
   const votedMemberIds = new Set(scheduleVotes.map((v) => v.member_id));
   const missingMembers = members.filter((m) => !votedMemberIds.has(m.id));
+  const daysInMonth = MONTH_DAYS[selectedTargetMonth] || 30;
 
   // ==========================================
   // 2. 메인 앱 화면
@@ -567,7 +637,6 @@ ${candLines}`;
           </button>
         </div>
 
-        {/* 대리 투표 선택 바 (같은 그룹 가족 우선 표시) */}
         <div className="max-w-2xl mx-auto mt-2.5 pt-2.5 border-t border-stone-100 flex items-center gap-2 overflow-x-auto">
           <span className="inline-flex items-center gap-1 text-xs font-semibold text-stone-500 shrink-0">
             <UserCheck className="w-3.5 h-3.5 text-amber-600" />
@@ -584,9 +653,7 @@ ${candLines}`;
               </option>
             ))}
           </select>
-          <span className="text-[11px] text-stone-400 truncate">
-            같은 그룹 가족 우선 표시
-          </span>
+          <span className="text-[11px] text-stone-400 truncate">같은 그룹 가족 우선 표시</span>
         </div>
       </header>
 
@@ -660,7 +727,7 @@ ${candLines}`;
                       className="flex items-center justify-center gap-1.5 py-3 px-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold"
                     >
                       <Calendar className="w-4 h-4" />
-                      1단계 일정 투표 & 추천
+                      일정·날짜 투표
                     </button>
                     <button
                       type="button"
@@ -733,9 +800,7 @@ ${candLines}`;
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-stone-700 mb-1">
-                  메모 (선택)
-                </label>
+                <label className="block text-sm font-bold text-stone-700 mb-1">메모 (선택)</label>
                 <input
                   type="text"
                   value={myMemo}
@@ -744,6 +809,92 @@ ${candLines}`;
                   className="w-full px-3.5 py-2.5 rounded-2xl border border-stone-200 text-sm"
                 />
               </div>
+            </div>
+
+            {scheduleSummary.unanimousMonths.length >= 2 && (
+              <div className="bg-amber-50 rounded-3xl p-5 border border-amber-300 space-y-3">
+                <div className="flex items-center gap-1.5 text-amber-900 font-bold text-sm">
+                  <Trophy className="w-4 h-4 text-amber-600" />
+                  만장일치 월이 {scheduleSummary.unanimousMonths.length}개 나왔어요! (날씨·가성비 순
+                  정렬)
+                </div>
+                <p className="text-xs text-stone-700">
+                  전 연령(70대~2세) 이동 쾌적도와 성수기 부담을 고려해{' '}
+                  <strong>{scheduleSummary.unanimousMonths[0]}</strong>을 우선 추천합니다. 최종 결선
+                  월을 골라보세요:
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {scheduleSummary.unanimousMonths.map((m, idx) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setRunoffChoice(runoffChoice === m ? '' : m)}
+                      className={`px-3.5 py-2 rounded-2xl text-xs font-bold border ${
+                        runoffChoice === m
+                          ? 'bg-amber-600 text-white border-amber-600'
+                          : 'bg-white text-stone-800 border-amber-300'
+                      }`}
+                    >
+                      {idx === 0 ? `★ ${m} (추천 1순위)` : `${m} (차선)`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="bg-white rounded-3xl p-5 border border-stone-200 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-bold text-base">2단계 구체적 날짜 투표</h3>
+                <select
+                  value={selectedTargetMonth}
+                  onChange={(e) => setSelectedTargetMonth(e.target.value)}
+                  className="text-xs font-bold bg-stone-100 border border-stone-300 rounded-xl px-2.5 py-1.5"
+                >
+                  {MONTHS.map((m) => (
+                    <option key={m} value={m}>
+                      {m} 달력 보기
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-xs text-stone-500">
+                가능한 날짜를 눌러주세요. 숫자 아래 표시는 가족들이 선택한 횟수입니다.
+              </p>
+
+              <div className="grid grid-cols-7 gap-1.5">
+                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
+                  const key = `${selectedTargetMonth}-${day}일`;
+                  const pickedByMe = mySelectedDates.includes(key);
+                  const voteCnt = scheduleSummary.dateCounts[key] || 0;
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => toggleDate(day)}
+                      className={`py-2 rounded-xl border text-center transition ${
+                        pickedByMe
+                          ? 'bg-amber-500 text-white border-amber-500 font-bold'
+                          : 'bg-stone-50 text-stone-800 border-stone-200'
+                      }`}
+                    >
+                      <div className="text-xs">{day}</div>
+                      <div
+                        className={`text-[10px] ${
+                          pickedByMe ? 'text-amber-100' : 'text-stone-400'
+                        }`}
+                      >
+                        {voteCnt > 0 ? `${voteCnt}표` : '-'}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {mySelectedDates.length > 0 && (
+                <p className="text-xs text-amber-800 font-medium">
+                  선택한 날짜: {mySelectedDates.join(', ')}
+                </p>
+              )}
 
               <button
                 type="button"
@@ -751,7 +902,7 @@ ${candLines}`;
                 className="w-full py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-bold flex items-center justify-center gap-1.5"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                {currentActor.name} 일정 저장하기
+                {currentActor.name} 일정·날짜 저장하기
               </button>
             </div>
 
@@ -761,10 +912,11 @@ ${candLines}`;
                 실시간 일정 집계 & 맞춤 추천 ({destinations.length}개 DB 연동)
               </div>
               <p className="text-sm text-stone-700">
-                <strong>주요 가능 월:</strong>{' '}
-                {scheduleSummary.topMonths.length > 0
-                  ? scheduleSummary.topMonths.join(', ')
-                  : '아직 투표 집계 전'}{' '}
+                <strong>기준 월:</strong>{' '}
+                {runoffChoice ||
+                  (scheduleSummary.topMonths.length > 0
+                    ? scheduleSummary.topMonths.join(', ')
+                    : '아직 투표 집계 전')}{' '}
                 / <strong>기준 박수:</strong> 최대 {scheduleSummary.minAgreedNights}박
               </p>
 
